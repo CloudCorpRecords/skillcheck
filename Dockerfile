@@ -20,6 +20,6 @@ USER node
 ENTRYPOINT ["node", "/app/dist/cli.js"]
 CMD ["mcp"]
 LABEL org.opencontainers.image.source="https://github.com/CloudCorpRecords/skillcheck" \
-      org.opencontainers.image.description="skillcheck: SKILL.md validator: frontmatter presence and shape, name matching the directory, description present, markdown links resolving to real files, and referenced files existing on disk." \
+      org.opencontainers.image.description="skillcheck: validate a SKILL.md file. Frontmatter, heading structure, markdown links, and referenced files are checked deterministically and locally. One bin serves the CLI and a stdio MCP server." \
       org.opencontainers.image.licenses="MIT" \
       io.modelcontextprotocol.server.name="io.github.CloudCorpRecords/skillcheck"

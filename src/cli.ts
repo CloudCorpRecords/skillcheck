@@ -2,52 +2,46 @@
 /**
  * skillcheck CLI.
  *
- *   skillcheck check [target] [--json]
+ *   skillcheck validate --skill <path> [--files <files.json>]
+ *                        [--sections <sections.json>]
  *   skillcheck mcp
- *   skillcheck --version
  *
- * Exit codes: 0 when the verdict is VALID, 1 for any other verdict,
- * 2 usage error, 141 when the reader closed the output pipe early
- * (the shell-visible equivalent of death by SIGPIPE). The emit contract
- * follows FACTORY-NOTES.md: one flush-aware write, exitCode never
- * process.exit on report paths.
+ * files.json / sections.json are JSON arrays of strings. The
+ * validation report is printed as JSON. Exit codes: 0 when the
+ * tool ran (even when the report's `valid` is false — validity
+ * is data, not a process failure), 1 runtime error, 2 usage
+ * error. Argument validation happens before any file is read.
  */
-import { runCheck, renderReport, CLEAN_VERDICT, VERSION } from "./core.js";
-
-function exitBrokenPipe(): never {
-  process.exit(141);
-}
-
-process.stdout.on("error", (err: NodeJS.ErrnoException) => {
-  if (err.code === "EPIPE") exitBrokenPipe();
-  throw err;
-});
-
-async function emit(text: string, code: number): Promise<void> {
-  process.exitCode = code;
-  await new Promise<void>((resolve, reject) => {
-    process.stdout.write(`${text}\n`, (err) => {
-      if (!err) {
-        resolve();
-        return;
-      }
-      if ((err as NodeJS.ErrnoException).code === "EPIPE") exitBrokenPipe();
-      reject(err);
-    });
-  });
-}
+import { readFileSync } from "node:fs";
+import { formatPayload, validateSkill, VERSION } from "./skillcheck.js";
 
 function usage(): never {
   console.error(`Usage:
-  skillcheck check [target] [--json]
+  skillcheck validate --skill <path> [--files <files.json>] [--sections <sections.json>]
   skillcheck mcp
   skillcheck --version`);
   process.exit(2);
 }
 
+function flag(rest: string[], name: string): string | undefined {
+  const i = rest.indexOf(name);
+  return i >= 0 ? rest[i + 1] : undefined;
+}
+
+function readJsonArray(path: string, label: string): unknown {
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch (err) {
+    console.error(
+      `error: cannot read or parse ${label} file '${path}': ${err instanceof Error ? err.message : String(err)}`,
+    );
+    process.exit(1);
+  }
+}
+
 async function main(): Promise<void> {
   const [cmd, ...rest] = process.argv.slice(2);
-  if (cmd === "--version" || cmd === "-v" || cmd === "version") {
+  if (cmd === "--version" || cmd === "-v") {
     console.log(VERSION);
     return;
   }
@@ -55,15 +49,39 @@ async function main(): Promise<void> {
     await import("./mcp.js");
     return;
   }
-  if (cmd !== "check") usage();
-  const target = rest.find((a) => !a.startsWith("--")) ?? ".";
+  if (cmd !== "validate") usage();
+
+  // ---- Argument validation (before any file is read) ----
+  const flags = ["--skill", "--files", "--sections"];
+  if (rest.some((a) => a.startsWith("--") && !flags.includes(a))) usage();
+  const skillPath = flag(rest, "--skill");
+  if (skillPath === undefined) usage();
+  const filesPath = flag(rest, "--files");
+  if (rest.includes("--files") && filesPath === undefined) usage();
+  const sectionsPath = flag(rest, "--sections");
+  if (rest.includes("--sections") && sectionsPath === undefined) usage();
+
+  let content: string;
   try {
-    const report = runCheck(target);
-    const text = rest.includes("--json") ? JSON.stringify(report, null, 2) : renderReport(report);
-    await emit(text, report.verdict === CLEAN_VERDICT ? 0 : 1);
+    content = readFileSync(skillPath, "utf8");
+  } catch (err) {
+    console.error(
+      `error: cannot read skill file '${skillPath}': ${err instanceof Error ? err.message : String(err)}`,
+    );
+    process.exit(1);
+  }
+
+  const availableFiles =
+    filesPath === undefined ? undefined : readJsonArray(filesPath, "files");
+  const requiredSections =
+    sectionsPath === undefined ? undefined : readJsonArray(sectionsPath, "sections");
+
+  try {
+    const out = validateSkill(content, availableFiles, requiredSections);
+    console.log(formatPayload(out));
   } catch (err) {
     console.error(`error: ${err instanceof Error ? err.message : String(err)}`);
-    process.exitCode = 2;
+    process.exit(1);
   }
 }
 
